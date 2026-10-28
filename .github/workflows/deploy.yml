@@ -1,0 +1,68 @@
+name: Refresh data and deploy dashboard
+
+on:
+  push:
+    branches:
+      - main
+  schedule:
+    - cron: '17 10 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: github-pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Refresh Colorado ECHO snapshot
+        env:
+          ECHO_API_TOKEN: ${{ secrets.ECHO_API_TOKEN }}
+        run: python scripts/refresh_data.py
+
+      - name: Test refresh and snapshot shaping
+        run: npm test
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint and build dashboard
+        run: |
+          npm run lint
+          npm run build
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

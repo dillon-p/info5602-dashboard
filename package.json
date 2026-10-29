@@ -9,6 +9,8 @@
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "test": "python3 -m unittest discover -s tests",
+    "data:download": "python3 -m scripts.download_snapshot",
+    "data:refresh": "python3 scripts/refresh_data.py",
     "preview": "vite preview"
   },
   "dependencies": {

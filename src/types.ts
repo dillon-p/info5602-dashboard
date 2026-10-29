@@ -11,7 +11,7 @@ export type Emission = {
   reporting_year: number
   registry_id: string
   program: string
-  program_code: string
+  program_code?: string
   program_id: string
   pollutant: string
   annual_emission: number
@@ -23,6 +23,7 @@ export type Emission = {
 export type Snapshot = {
   schema_version: 1
   generated_at: string | null
+  minimum_reporting_year?: number
   source: string
   facility_count: number
   record_count: number

@@ -4,6 +4,12 @@ import type { Emission, Facility, Snapshot } from './types'
 
 const formatNumber = new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 })
 const formatInteger = new Intl.NumberFormat('en-US')
+const programLabels: Record<string, string> = {
+  EIS: 'National Emissions Inventory (NEI)',
+  'E-GGRT': 'Greenhouse Gas Reporting Program (GHGRP)',
+  TRIS: 'Toxics Release Inventory (TRI)',
+  CAMDBS: 'Clean Air Markets (CAMD)',
+}
 
 type Filters = {
   year: string
@@ -26,6 +32,8 @@ function isSnapshot(value: unknown): value is Snapshot {
   const candidate = value as Partial<Snapshot>
   return (
     candidate.schema_version === 1 &&
+    (candidate.minimum_reporting_year === undefined ||
+      typeof candidate.minimum_reporting_year === 'number') &&
     Array.isArray(candidate.facilities) &&
     Array.isArray(candidate.emissions) &&
     candidate.facilities.every(
@@ -43,6 +51,8 @@ function isSnapshot(value: unknown): value is Snapshot {
         typeof record.pollutant === 'string' &&
         typeof record.annual_emission === 'number' &&
         Number.isFinite(record.annual_emission) &&
+        (candidate.minimum_reporting_year === undefined ||
+          record.reporting_year >= candidate.minimum_reporting_year) &&
         typeof record.unit_of_measure === 'string',
     )
   )
@@ -178,7 +188,7 @@ function App() {
   )
   const emissions = snapshot?.emissions ?? []
   const years = [...new Set(emissions.map((record) => record.reporting_year))].sort((a, b) => b - a)
-  const programs = optionValues(emissions.map((record) => record.program))
+  const programs = optionValues(emissions.map((record) => record.program_code ?? record.program))
   const pollutants = optionValues(emissions.map((record) => record.pollutant))
   const units = optionValues(emissions.map((record) => record.unit_of_measure))
 
@@ -194,7 +204,8 @@ function App() {
   const filteredEmissions = emissions.filter(
     (record) =>
       (filters.year === 'all' || record.reporting_year.toString() === filters.year) &&
-      (filters.program === 'all' || record.program === filters.program) &&
+      (filters.program === 'all' ||
+        (record.program_code ?? record.program) === filters.program) &&
       (filters.pollutant === 'all' || record.pollutant === filters.pollutant) &&
       (selectedUnit === 'all' || record.unit_of_measure === selectedUnit),
   )
@@ -257,7 +268,7 @@ function App() {
         <div className="ribbon-label"><span className="live-dot" /> ECHO AIR EMISSIONS DATA</div>
         <div className="ribbon-detail">
           {snapshot?.generated_at
-            ? `Snapshot refreshed ${new Date(snapshot.generated_at).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric', timeZone: 'UTC' })}`
+            ? `Snapshot refreshed ${new Date(snapshot.generated_at).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric', timeZone: 'UTC' })} · Coverage from ${snapshot.minimum_reporting_year ?? Math.min(...snapshot.emissions.map((record) => record.reporting_year))}`
             : 'Waiting for the first successful data refresh'}
         </div>
         <div className="ribbon-source">EPA · EDGI ECHO Pipeline</div>
@@ -292,7 +303,7 @@ function App() {
               <span>EPA program</span>
               <select value={filters.program} onChange={(event) => updateFilter('program', event.target.value)}>
                 <option value="all">All programs</option>
-                {programs.map((program) => <option key={program} value={program}>{program}</option>)}
+                {programs.map((program) => <option key={program} value={program}>{programLabels[program] ?? program}</option>)}
               </select>
             </label>
             <label>

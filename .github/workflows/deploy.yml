@@ -1,11 +1,9 @@
-name: Refresh data and deploy dashboard
+name: Deploy dashboard
 
 on:
   push:
     branches:
       - main
-  schedule:
-    - cron: '17 10 * * 1'
   workflow_dispatch:
 
 permissions:
@@ -39,17 +37,7 @@ jobs:
           node-version: '22'
           cache: npm
 
-      - name: Download the published snapshot for code changes
-        if: github.event_name == 'push'
-        run: npm run data:download
-
-      - name: Refresh Colorado ECHO snapshot
-        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-        env:
-          ECHO_API_TOKEN: ${{ secrets.ECHO_API_TOKEN }}
-        run: python scripts/refresh_data.py
-
-      - name: Test refresh and snapshot shaping
+      - name: Test snapshot shaping
         run: npm test
 
       - name: Install dependencies

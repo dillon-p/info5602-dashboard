@@ -1,47 +1,63 @@
-# Colorado Emissions Atlas
+# Work, recharted
 
-A small, public dashboard for facility-reported air emissions in Colorado using EPA's ECHO Air Emissions dataset through the EDGI ECHO-Pipeline API. The frontend is a static React + TypeScript + Vite site for GitHub Pages; GitHub Actions refreshes the public data snapshot weekly.
+A public React + TypeScript dashboard exploring projected employment growth, median wages, and relative AI exposure across occupations. It is a static Vite site and reads its data from `public/data/bls_ai_exposure.json`.
 
 ## What the dashboard shows
 
-- Colorado facilities with reported emissions and reporting records
-- Filters for reporting year, EPA program, pollutant, and emissions unit
-- Annual reported values and facility totals
+- One bubble per occupation, positioned by projected employment change (2025–35) and 2025 median annual wage
+- Bubble color for relative AI exposure and bubble area scaled to 2025 employment
+- Mean and median projected employment change by AI-exposure group, using the supplied `metrics` array
 
-Different programs and pollutants use different units and reporting schedules. The dashboard keeps unit-specific values separate and does not rank facilities across different units. ECHO values are reported or estimated emissions, not direct measurements or a measure of exposure, compliance, or health risk. See the [EPA Air Emissions dataset documentation](https://echo.epa.gov/tools/data-downloads/air-emissions-download-summary).
+AI exposure is a category in the supplied dataset, not a forecast that a job will disappear or a measure of an individual worker's risk. Missing numeric source values may be `null` or an em dash; both are treated as unavailable in the chart.
 
-## Run locally
+## Run the dashboard locally
 
-Requirements: Node.js 22 or newer and Python 3.
+Requirements: Node.js 22 or newer.
 
 ```sh
 npm ci
-npm run data:download
 npm run dev
 ```
 
-`npm run data:download` copies the latest published public data snapshot to `public/data/colorado-emissions.json` without requiring an API token. To fetch from another published dashboard, set `DASHBOARD_SNAPSHOT_URL` to its JSON snapshot URL before running the command.
+Run `npm run build` to type-check and create the production site in `dist/`.
 
-To refresh directly from the API instead, run `npm run data:refresh` in a terminal; it prompts for the API token without echoing the input. The refresh is long-running and rate-limited, so downloading the latest published snapshot is the recommended path for UI/layout work. Start Vite after either command to view the local app with that data. `npm test` checks offline data normalization and snapshot safeguards; it does not call the authenticated ECHO API.
+## Legacy ECHO data tooling
 
-## Configure publishing and weekly refresh
+The existing Python tooling and notebook workspace for Colorado ECHO emissions is retained, but it does not supply data to this dashboard. Its snapshot download and refresh commands still write `public/data/colorado-emissions.json`.
+
+### Refresh from local Delta tables
+
+The refresh requires local ECHO Delta tables and the Docker/PySpark environment described in the [ECHO_modules local Delta Lake instructions](https://github.com/edgi-govdata-archiving/ECHO_modules/tree/echo-modules-delta#using-the-echo-tables-in-a-local-delta-lake-system). It reads `ECHO_EXPORTER` and `POLL_RPT_COMBINED_EMISSIONS` from the configured Delta table directory, filters to Colorado and reporting years from 2016 onward, then writes the legacy emissions snapshot.
+
+1. Follow the linked ECHO_modules setup to prepare the local Delta tables and schemas.
+2. In the ECHO_modules checkout's `.env`, set `DELTA_TABLES_HOST_PATH` and `SCHEMA_HOST_PATH` to those local directories. Set `WORK_DIR_HOST_PATH` to the root of this dashboard repository.
+3. Build and start the ECHO_modules service:
+
+   ```sh
+   docker compose -f docker-compose.yaml build
+   docker compose -f docker-compose.yaml up
+   ```
+
+4. In another terminal, run the refresh script in the container:
+
+   ```sh
+   docker exec -it echo-modules-delta bash
+   cd /opt/spark/work-dir
+   python -m analytics.scripts.refresh_data
+   ```
+
+The container exposes the tables at `DELTA_TABLES_MOUNT_PATH`. To use another reporting-year floor, set `ECHO_MIN_YEAR` in the container environment. The script refuses to replace the snapshot if either table is missing, a read fails, or the result is empty or invalid. Review the generated `public/data/colorado-emissions.json`, then commit it and push to `main` to publish it. The snapshot contains only the facility and emissions fields used by the dashboard.
+
+`npm test` checks offline normalization, Delta refresh orchestration, and snapshot safeguards; it does not require PySpark or local Delta data. The existing snapshot remains usable for dashboard development if you have not configured a local Delta source.
+
+### Analytics workspace
+
+The [analytics workspace](./analytics/) keeps the legacy Python data tooling, notebooks, and tests together. The [notebook setup guide](./analytics/notebooks/README.md) covers using the ECHO_modules JupyterLab environment.
+
+## Configure publishing
 
 1. Publish this project in a GitHub repository and ensure its default deployment branch is `main`.
-2. Obtain an ECHO API bearer token using the [ECHO_modules instructions](https://github.com/edgi-govdata-archiving/ECHO_modules/tree/echo-modules-delta#basic-usage). Do not commit the token or put it in frontend configuration.
-3. In the repository, open **Settings → Secrets and variables → Actions**, create a repository secret named `ECHO_API_TOKEN`, and add the token there.
-4. Open **Settings → Pages** and select **GitHub Actions** as the build and deployment source.
-5. Run **Actions → Refresh data and deploy dashboard → Run workflow** once. Confirm it succeeds before relying on weekly updates.
+2. Open **Settings → Pages** and select **GitHub Actions** as the build and deployment source.
+3. Push the committed snapshot and code to `main`, or run **Actions → Deploy dashboard → Run workflow** to deploy the current commit.
 
-The workflow refreshes weekly on Monday at 10:17 UTC, and can also be started manually. Pushes to `main` download the already-published public snapshot and deploy code changes without repeating the API refresh; scheduled and manual runs call ECHO and publish fresh data. It publishes only after the API requests and validation all succeed; an expired/rejected token fails the workflow and does not deploy an empty snapshot. The workflow never prints the token or puts it in the browser bundle. The generated `public/data/colorado-emissions.json` is public, so it contains only the facility and emissions fields needed by this dashboard.
-
-The API token's expiration and unattended renewal behavior have not been established. If the scheduled workflow later fails with an authentication error, update the Actions secret with a valid token or arrange unattended API credentials; do not make the API token public to avoid refresh failures.
-
-The workflow uses Node-24-compatible GitHub Actions and pins `ubuntu-26.04` instead of the moving `ubuntu-latest` alias. The app itself is still built with Node.js 22.
-
-## Data pipeline
-
-The refresh starts by selecting Colorado facilities from `ECHO_EXPORTER`. It then counts and samples nationwide `POLL_RPT_COMBINED_EMISSIONS` rows from 2016 onward to estimate response size. If the estimate is below 50 MB, it requests the nationwide result once and filters to Colorado locally. The response has a hard 50 MB limit. If the estimate is larger (or the response exceeds the limit), it falls back to Colorado registry-ID batches sized to fit safe request URLs. Requests are spaced to respect the API's documented rate limit. The script logs request durations, row counts, byte counts, request totals, and overall refresh time, and atomically replaces the public snapshot only after the complete refresh succeeds. Records before 2016 are excluded from the snapshot.
-
-Use the `[preflight]` log line to see the nationwide row count and estimated size. Each `[api]` line reports a single request's rows, downloaded bytes, and time; the final `[refresh]` line reports request count and total run time. The 2016 cutoff reduces rows and payload, but the national query path is what can reduce API calls from many batches to a single data request. If preflight chooses the batched fallback, the logs show how many requests remain; do not reduce the six-second pacing below the API's published limit.
-
-The API base defaults to `https://portal.gss.stonybrook.edu/api`. The optional `ECHO_API_BASE_URL` environment variable can be used to point the script at an approved API deployment.
+The workflow tests, builds, and deploys the snapshot already committed in the repository. It does not refresh data on a schedule or contact the ECHO API. A hosted Delta refresh would require a Delta source and credentials accessible to the Actions runner; none is configured by the linked local setup. GitHub-hosted Actions may fit within included usage, but storage, compute, access, and usage limits would need to be established before treating it as a free unattended option.

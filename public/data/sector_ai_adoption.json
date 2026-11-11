@@ -1,0 +1,183 @@
+{
+  "schemaVersion": 1,
+  "questionId": 7,
+  "question": "In the last two weeks, did this business use Super Intelligence or SI (formerly referred to as Artificial Intelligence or AI) in any of its business functions? (Examples of SI use include: SI-powered data analysis; generative SI for marketing, product design, or coding; virtual SI agents for customer service; SI-powered forecasting or pricing; SI-driven computer vision for quality control, etc.)",
+  "sectorCount": 19,
+  "weeks": [
+    {
+      "year": 2025,
+      "week": 24,
+      "yesPercent": 18.45,
+      "availableSectorCount": 16,
+      "lowConfidenceSectorCount": 3
+    },
+    {
+      "year": 2025,
+      "week": 25,
+      "yesPercent": 16.622,
+      "availableSectorCount": 18,
+      "lowConfidenceSectorCount": 1
+    },
+    {
+      "year": 2025,
+      "week": 26,
+      "yesPercent": 18.218,
+      "availableSectorCount": 17,
+      "lowConfidenceSectorCount": 2
+    },
+    {
+      "year": 2026,
+      "week": 1,
+      "yesPercent": 18.3,
+      "availableSectorCount": 16,
+      "lowConfidenceSectorCount": 3
+    },
+    {
+      "year": 2026,
+      "week": 2,
+      "yesPercent": 18.124,
+      "availableSectorCount": 17,
+      "lowConfidenceSectorCount": 2
+    },
+    {
+      "year": 2026,
+      "week": 3,
+      "yesPercent": 18.017,
+      "availableSectorCount": 18,
+      "lowConfidenceSectorCount": 1
+    },
+    {
+      "year": 2026,
+      "week": 4,
+      "yesPercent": 16.922,
+      "availableSectorCount": 18,
+      "lowConfidenceSectorCount": 1
+    },
+    {
+      "year": 2026,
+      "week": 5,
+      "yesPercent": 18.047,
+      "availableSectorCount": 17,
+      "lowConfidenceSectorCount": 2
+    },
+    {
+      "year": 2026,
+      "week": 6,
+      "yesPercent": 18.818,
+      "availableSectorCount": 17,
+      "lowConfidenceSectorCount": 2
+    },
+    {
+      "year": 2026,
+      "week": 7,
+      "yesPercent": 18.2,
+      "availableSectorCount": 18,
+      "lowConfidenceSectorCount": 1
+    },
+    {
+      "year": 2026,
+      "week": 8,
+      "yesPercent": 20.556,
+      "availableSectorCount": 16,
+      "lowConfidenceSectorCount": 3
+    },
+    {
+      "year": 2026,
+      "week": 9,
+      "yesPercent": 19.812,
+      "availableSectorCount": 17,
+      "lowConfidenceSectorCount": 2
+    },
+    {
+      "year": 2026,
+      "week": 10,
+      "yesPercent": 20.142,
+      "availableSectorCount": 19,
+      "lowConfidenceSectorCount": 0
+    },
+    {
+      "year": 2026,
+      "week": 11,
+      "yesPercent": 20.782,
+      "availableSectorCount": 17,
+      "lowConfidenceSectorCount": 2
+    },
+    {
+      "year": 2026,
+      "week": 12,
+      "yesPercent": 21.129,
+      "availableSectorCount": 17,
+      "lowConfidenceSectorCount": 2
+    },
+    {
+      "year": 2026,
+      "week": 13,
+      "yesPercent": 20.089,
+      "availableSectorCount": 18,
+      "lowConfidenceSectorCount": 1
+    },
+    {
+      "year": 2026,
+      "week": 14,
+      "yesPercent": 21.722,
+      "availableSectorCount": 18,
+      "lowConfidenceSectorCount": 1
+    },
+    {
+      "year": 2026,
+      "week": 15,
+      "yesPercent": 22.211,
+      "availableSectorCount": 18,
+      "lowConfidenceSectorCount": 1
+    },
+    {
+      "year": 2026,
+      "week": 16,
+      "yesPercent": 21.063,
+      "availableSectorCount": 19,
+      "lowConfidenceSectorCount": 0
+    },
+    {
+      "year": 2026,
+      "week": 17,
+      "yesPercent": 22.435,
+      "availableSectorCount": 17,
+      "lowConfidenceSectorCount": 2
+    },
+    {
+      "year": 2026,
+      "week": 18,
+      "yesPercent": 23.222,
+      "availableSectorCount": 18,
+      "lowConfidenceSectorCount": 1
+    },
+    {
+      "year": 2026,
+      "week": 19,
+      "yesPercent": 22.061,
+      "availableSectorCount": 18,
+      "lowConfidenceSectorCount": 1
+    },
+    {
+      "year": 2026,
+      "week": 20,
+      "yesPercent": 23.111,
+      "availableSectorCount": 19,
+      "lowConfidenceSectorCount": 0
+    },
+    {
+      "year": 2026,
+      "week": 21,
+      "yesPercent": 24.126,
+      "availableSectorCount": 19,
+      "lowConfidenceSectorCount": 0
+    },
+    {
+      "year": 2026,
+      "week": 22,
+      "yesPercent": 24.771,
+      "availableSectorCount": 17,
+      "lowConfidenceSectorCount": 2
+    }
+  ]
+}

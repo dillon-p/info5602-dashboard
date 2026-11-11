@@ -1,20 +1,22 @@
 {
-  "name": "colorado-echo-emissions",
+  "name": "work-recharted",
   "private": true,
   "version": "0.1.0",
-  "description": "A unit-aware dashboard for Colorado facility air emissions reported to EPA ECHO.",
+  "description": "Explore projected employment growth, median wages, and relative AI exposure across occupations.",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
-    "test": "python3 -m unittest discover -s tests",
-    "data:download": "python3 -m scripts.download_snapshot",
-    "data:refresh": "python3 scripts/refresh_data.py",
+    "test": "python3 -m unittest discover -s analytics/tests",
+    "data:download": "python3 -m analytics.scripts.download_snapshot",
+    "data:refresh": "python3 -m analytics.scripts.refresh_data",
     "preview": "vite preview"
   },
   "dependencies": {
+    "chart.js": "^4.6.1",
     "react": "^19.3.1",
+    "react-chartjs-2": "^5.3.1",
     "react-dom": "^19.3.1"
   },
   "devDependencies": {

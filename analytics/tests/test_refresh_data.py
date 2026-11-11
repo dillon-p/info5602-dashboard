@@ -2,30 +2,25 @@ import io
 import json
 import tempfile
 import unittest
-import urllib.parse
 from pathlib import Path
 from unittest.mock import patch
 
-from scripts.download_snapshot import download_snapshot
-from scripts.refresh_data import (
-    API_BASE,
+from analytics.scripts.download_snapshot import download_snapshot
+from analytics.scripts.refresh_data import (
     DEFAULT_MIN_YEAR,
-    EMISSIONS_TABLE,
-    EchoApi,
-    ResultTooLargeError,
+    DeltaLakeReader,
     build_snapshot,
-    batches,
-    emissions_sql,
     normalize_emissions,
     normalize_facilities,
     refresh,
-    sql_string,
+    write_snapshot,
 )
 
 
 def facility(registry_id, name="Mountain Energy"):
     return {
         "registry_id": registry_id,
+        "fac_state": "CO",
         "fac_name": name,
         "fac_city": "Denver",
         "fac_county": "Denver",
@@ -39,12 +34,9 @@ def emission(registry_id, year, amount=45.5):
         "reporting_year": year,
         "registry_id": registry_id,
         "pgm_sys_acrnm": "E-GGRT",
-        "pgm_sys_id": "1234",
         "pollutant_name": "Carbon dioxide",
         "annual_emission": amount,
         "unit_of_measure": "MTCO2e/year",
-        "nei_type": "GHG",
-        "nei_hap_voc_flag": "",
     }
 
 
@@ -126,83 +118,72 @@ class NormalizeEmissionsTests(unittest.TestCase):
                 "2026-10-28T00:00:00Z",
             )
 
-    def test_escapes_values_in_sql_literals_and_filters_years(self):
-        self.assertEqual(sql_string("Facility's ID"), "'Facility''s ID'")
-        query = emissions_sql(DEFAULT_MIN_YEAR)
-        self.assertIn("WHERE reporting_year >= 2016", query)
-        self.assertNotIn("pgm_sys_id", query)
-        self.assertNotIn("nei_type", query)
+
+class FakeDeltaSource:
+    def __init__(self, facilities=None, emissions=None):
+        self.facilities = facilities if facilities is not None else [facility("CO-1")]
+        self.emissions = emissions if emissions is not None else [
+            emission("CO-1", 2022),
+            emission("US-2", 2023),
+        ]
+        self.requested_facility_ids = None
+        self.requested_min_year = None
+
+    def read_facilities(self):
+        return self.facilities
+
+    def read_emissions(self, facility_ids, min_year):
+        self.requested_facility_ids = facility_ids
+        self.requested_min_year = min_year
+        return [
+            row
+            for row in self.emissions
+            if row["registry_id"] in facility_ids and row["reporting_year"] >= min_year
+        ]
 
 
-class RefreshStrategyTests(unittest.TestCase):
-    class FakeApi:
-        base_url = API_BASE
+class RefreshTests(unittest.TestCase):
+    def test_filters_emissions_to_colorado_facilities_and_year_floor(self):
+        source = FakeDeltaSource(
+            emissions=[
+                emission("CO-1", 2022),
+                emission("CO-1", 2015),
+                emission("US-2", 2023),
+            ]
+        )
 
-        def __init__(self, national_too_large=False):
-            self.request_count = 0
-            self.last_response_bytes = 0
-            self.national_too_large = national_too_large
-            self.national_rows = [emission("CO-1", 2022), emission("US-2", 2023)]
+        snapshot = refresh(source)
 
-        def read_table(self, table_name, sql, max_response_bytes=None):
-            self.request_count += 1
-            if table_name == "ECHO_EXPORTER":
-                rows = [facility("CO-1")]
-            elif "COUNT(*)" in sql:
-                rows = [{"row_count": len(self.national_rows)}]
-            elif "LIMIT" in sql:
-                rows = self.national_rows
-            elif "registry_id IN" in sql:
-                rows = [row for row in self.national_rows if row["registry_id"] == "CO-1"]
-            else:
-                if self.national_too_large:
-                    raise ResultTooLargeError("over limit")
-                rows = self.national_rows
-            self.last_response_bytes = len(json.dumps(rows, separators=(",", ":")).encode())
-            if max_response_bytes is not None and self.last_response_bytes > max_response_bytes:
-                raise AssertionError("Fake response unexpectedly exceeded the requested cap.")
-            return rows
-
-    def test_nationwide_query_filters_year_and_facility_locally(self):
-        api = self.FakeApi()
-
-        snapshot = refresh(api, max_national_bytes=50_000)
-
-        self.assertEqual(snapshot["minimum_reporting_year"], 2016)
+        self.assertEqual(snapshot["minimum_reporting_year"], DEFAULT_MIN_YEAR)
         self.assertEqual(snapshot["record_count"], 1)
         self.assertEqual(snapshot["emissions"][0]["registry_id"], "CO-1")
-        self.assertEqual(api.request_count, 4)
+        self.assertEqual(source.requested_facility_ids, ["CO-1"])
+        self.assertEqual(source.requested_min_year, DEFAULT_MIN_YEAR)
 
-    def test_actual_size_overrun_falls_back_to_id_batches(self):
-        api = self.FakeApi(national_too_large=True)
+    def test_rejects_empty_facility_results_before_reading_emissions(self):
+        source = FakeDeltaSource(facilities=[])
 
-        snapshot = refresh(api, max_national_bytes=50_000)
+        with self.assertRaisesRegex(ValueError, "no Colorado facilities"):
+            refresh(source)
+        self.assertIsNone(source.requested_facility_ids)
 
-        self.assertEqual(snapshot["record_count"], 1)
-        self.assertEqual(snapshot["emissions"][0]["registry_id"], "CO-1")
-        self.assertEqual(api.request_count, 5)
+    def test_delta_reader_reports_missing_table_directories(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(FileNotFoundError, "ECHO_EXPORTER"):
+                with DeltaLakeReader(Path(directory)):
+                    self.fail("A reader with missing tables should not start.")
 
-    def test_large_estimate_falls_back_to_id_batches(self):
-        api = self.FakeApi()
 
-        snapshot = refresh(api, max_national_bytes=1)
+class SnapshotWriteTests(unittest.TestCase):
+    def test_invalid_snapshot_does_not_replace_existing_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "snapshot.json"
+            path.write_text("existing snapshot")
 
-        self.assertEqual(snapshot["record_count"], 1)
-        self.assertEqual(snapshot["emissions"][0]["registry_id"], "CO-1")
-        self.assertEqual(api.request_count, 4)
+            with self.assertRaises(ValueError):
+                write_snapshot({}, path)
 
-    def test_batches_grow_until_safe_url_or_id_limit(self):
-        ids = [f"01234567-89ab-cdef-0123-{index:012d}" for index in range(500)]
-        grouped = list(batches(ids))
-
-        self.assertGreater(max(map(len, grouped)), 80)
-        self.assertEqual(sum(map(len, grouped)), len(ids))
-        for group in grouped:
-            url = (
-                f"{API_BASE}/echo/{EMISSIONS_TABLE}?"
-                f"{urllib.parse.urlencode({'sql': emissions_sql(DEFAULT_MIN_YEAR, group)})}"
-            )
-            self.assertLessEqual(len(url), 7000)
+            self.assertEqual(path.read_text(), "existing snapshot")
 
 
 class DownloadSnapshotTests(unittest.TestCase):
@@ -216,7 +197,7 @@ class DownloadSnapshotTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "snapshot.json"
-            with patch("scripts.download_snapshot.urllib.request.urlopen", return_value=response):
+            with patch("analytics.scripts.download_snapshot.urllib.request.urlopen", return_value=response):
                 result = download_snapshot("https://example.test/snapshot.json", path)
 
             self.assertEqual(result["record_count"], 1)
@@ -236,7 +217,7 @@ class DownloadSnapshotTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "snapshot.json"
-            with patch("scripts.download_snapshot.urllib.request.urlopen", return_value=response):
+            with patch("analytics.scripts.download_snapshot.urllib.request.urlopen", return_value=response):
                 result = download_snapshot("https://example.test/snapshot.json", path)
 
             self.assertEqual(result["minimum_reporting_year"], 2016)
@@ -249,30 +230,10 @@ class DownloadSnapshotTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "snapshot.json"
             path.write_text("existing snapshot")
-            with patch("scripts.download_snapshot.urllib.request.urlopen", return_value=response):
+            with patch("analytics.scripts.download_snapshot.urllib.request.urlopen", return_value=response):
                 with self.assertRaisesRegex(RuntimeError, "snapshot is invalid"):
                     download_snapshot("https://example.test/snapshot.json", path)
             self.assertEqual(path.read_text(), "existing snapshot")
-
-
-class EchoApiTests(unittest.TestCase):
-    class Response(io.BytesIO):
-        headers = {"Content-Length": "100"}
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args):
-            self.close()
-
-    def test_national_response_byte_limit_is_enforced_from_headers(self):
-        api = EchoApi(API_BASE, "test-token")
-        with patch(
-            "scripts.refresh_data.urllib.request.urlopen",
-            return_value=self.Response(b"[]"),
-        ):
-            with self.assertRaises(ResultTooLargeError):
-                api.read_table(EMISSIONS_TABLE, "SELECT * FROM table", max_response_bytes=10)
 
 
 if __name__ == "__main__":

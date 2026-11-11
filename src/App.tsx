@@ -1,464 +1,1042 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
+import {
+  BarElement,
+  CategoryScale,
+  Chart as ChartJS,
+  Legend,
+  LinearScale,
+  LineElement,
+  PointElement,
+  Tooltip,
+  type BubbleDataPoint,
+  type ChartData,
+  type ChartOptions,
+  type Plugin,
+  type TooltipItem,
+} from 'chart.js'
+import { Bar } from 'react-chartjs-2'
+import { Bubble } from 'react-chartjs-2'
+import { Line } from 'react-chartjs-2'
 import './App.css'
-import type { Emission, Facility, Snapshot } from './types'
+import type { BlsDataset, BlsOccupation, Exposure } from './types'
 
-const formatNumber = new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 })
-const formatInteger = new Intl.NumberFormat('en-US')
-const programLabels: Record<string, string> = {
-  EIS: 'National Emissions Inventory (NEI)',
-  'E-GGRT': 'Greenhouse Gas Reporting Program (GHGRP)',
-  TRIS: 'Toxics Release Inventory (TRI)',
-  CAMDBS: 'Clean Air Markets (CAMD)',
+type Theme = 'light' | 'dark'
+
+type SectorTimelinePoint = {
+  year: number
+  week: number
+  yesPercent: number | null
+  availableSectorCount: number
+  lowConfidenceSectorCount: number
 }
 
-type Filters = {
-  year: string
-  program: string
-  pollutant: string
-  unit: string
+type SectorTimelineData = {
+  schemaVersion: 1
+  questionId: 7
+  question: string
+  sectorCount: number
+  weeks: SectorTimelinePoint[]
 }
 
-type FacilityTotal = {
-  facility: Facility
-  unit: string
-  total: number
-  programs: Set<string>
-  pollutants: Set<string>
-  years: Set<number>
+type ChartPalette = {
+  exposures: Record<Exposure, { fill: string; border: string }>
+  grid: string
+  axisText: string
+  timelineLine: string
+  lowConfidence: string
+  referenceLine: string
+  annotationText: string
+  annotationBackground: string
+  tooltipBackground: string
+  tooltipBorder: string
+  tooltipText: string
 }
 
-function isSnapshot(value: unknown): value is Snapshot {
-  if (!value || typeof value !== 'object') return false
-  const candidate = value as Partial<Snapshot>
+ChartJS.register(BarElement, CategoryScale, LinearScale, LineElement, PointElement, Tooltip, Legend)
+ChartJS.defaults.font.family = 'Montserrat, sans-serif'
+
+const exposureOrder: Exposure[] = ['Very high', 'High', 'Moderate', 'Low']
+const exposureColors: Record<Exposure, string> = {
+  'Very high': 'rgb(184, 40, 105)',
+  High: 'rgb(199, 79, 133)',
+  Moderate: 'rgb(222, 146, 180)',
+  Low: 'rgb(245, 225, 234)',
+}
+
+function getChartPalette(theme: Theme): ChartPalette {
+  const outline = theme === 'dark' ? 'rgb(234 234 244)' : 'rgb(62 63 69)'
+
+  return {
+    exposures: {
+      'Very high': { fill: exposureColors['Very high'], border: outline },
+      High: { fill: exposureColors.High, border: outline },
+      Moderate: { fill: exposureColors.Moderate, border: outline },
+      Low: { fill: exposureColors.Low, border: outline },
+    },
+    grid: theme === 'dark' ? 'rgb(234 234 244 / 13%)' : 'rgb(0 0 0 / 8%)',
+    axisText: theme === 'dark' ? '#fff' : 'rgb(62 63 69)',
+    timelineLine: theme === 'dark' ? 'rgb(105 168 255)' : 'rgb(29 99 196)',
+    lowConfidence: theme === 'dark' ? 'rgb(245 153 197)' : 'rgb(137 28 79)',
+    referenceLine: theme === 'dark' ? 'rgb(234 234 244)' : 'rgb(38 38 42)',
+    annotationText: theme === 'dark' ? 'rgb(234 234 244)' : 'rgb(38 38 42)',
+    annotationBackground: theme === 'dark' ? 'rgb(38 38 42)' : '#fff',
+    tooltipBackground: theme === 'dark' ? 'rgb(62 63 69)' : 'rgb(234 234 244)',
+    tooltipBorder: theme === 'dark' ? 'rgb(87 88 95)' : 'rgb(189 190 202)',
+    tooltipText: theme === 'dark' ? 'rgb(255 255 255)' : 'rgb(38 38 42)',
+  }
+}
+
+const formatNumber = new Intl.NumberFormat('en-US', { maximumFractionDigits: 1 })
+const axisNumber = new Intl.NumberFormat('en-US', { maximumFractionDigits: 1 })
+const formatPercent = (value: number) => `${formatNumber.format(value)}%`
+const formatAxisPercent = (value: number) => `${axisNumber.format(value)}%`
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function isNumericValue(value: unknown): value is number | null | '—' {
+  return value === null || value === '—' || (typeof value === 'number' && Number.isFinite(value))
+}
+
+function isExposure(value: unknown): value is Exposure {
+  return typeof value === 'string' && exposureOrder.includes(value as Exposure)
+}
+
+function isOccupation(value: unknown): value is BlsOccupation {
+  if (!isRecord(value)) return false
+
   return (
-    candidate.schema_version === 1 &&
-    (candidate.minimum_reporting_year === undefined ||
-      typeof candidate.minimum_reporting_year === 'number') &&
-    Array.isArray(candidate.facilities) &&
-    Array.isArray(candidate.emissions) &&
-    candidate.facilities.every(
-      (facility) =>
-        typeof facility.registry_id === 'string' &&
-        typeof facility.name === 'string' &&
-        typeof facility.city === 'string' &&
-        typeof facility.county === 'string',
-    ) &&
-    candidate.emissions.every(
-      (record) =>
-        typeof record.reporting_year === 'number' &&
-        typeof record.registry_id === 'string' &&
-        typeof record.program === 'string' &&
-        typeof record.pollutant === 'string' &&
-        typeof record.annual_emission === 'number' &&
-        Number.isFinite(record.annual_emission) &&
-        (candidate.minimum_reporting_year === undefined ||
-          record.reporting_year >= candidate.minimum_reporting_year) &&
-        typeof record.unit_of_measure === 'string',
-    )
+    typeof value['Occupation title'] === 'string' &&
+    typeof value['SOC code'] === 'string' &&
+    typeof value['Industry title'] === 'string' &&
+    value['Industry title'].trim().length > 0 &&
+    isExposure(value['Relative AI exposure']) &&
+    isNumericValue(value['Employment change, percent']) &&
+    isNumericValue(value['Total occupational separations rate, annual average'])
   )
 }
 
-function optionValues(values: string[]) {
-  return [...new Set(values.filter(Boolean))].sort((a, b) => a.localeCompare(b))
+function isDataset(value: unknown): value is BlsDataset {
+  if (!isRecord(value) || !Array.isArray(value.raw_data)) {
+    return false
+  }
+
+  const metricsAreValid =
+    value.metrics === undefined ||
+    (Array.isArray(value.metrics) &&
+      value.metrics.length === exposureOrder.length &&
+      value.metrics.every(
+        (metric) =>
+          isRecord(metric) &&
+          isExposure(metric['Relative AI exposure']) &&
+          typeof metric.mean === 'number' &&
+          Number.isFinite(metric.mean) &&
+          typeof metric.median === 'number' &&
+          Number.isFinite(metric.median),
+      ) &&
+      new Set(
+        value.metrics.map((metric) =>
+          isRecord(metric) ? metric['Relative AI exposure'] : undefined,
+        ),
+      ).size === exposureOrder.length)
+
+  return (
+    value.raw_data.every(isOccupation) &&
+    metricsAreValid
+  )
 }
 
-function summarizeFacilities(records: Emission[], facilities: Map<string, Facility>) {
-  const grouped = new Map<string, FacilityTotal>()
+function isSectorTimeline(value: unknown): value is SectorTimelineData {
+  if (
+    !isRecord(value) ||
+    value.schemaVersion !== 1 ||
+    value.questionId !== 7 ||
+    typeof value.question !== 'string' ||
+    typeof value.sectorCount !== 'number' ||
+    !Number.isInteger(value.sectorCount) ||
+    value.sectorCount <= 0 ||
+    !Array.isArray(value.weeks)
+  ) {
+    return false
+  }
 
-  for (const record of records) {
-    const facility = facilities.get(record.registry_id)
-    if (!facility) continue
-
-    const key = `${record.registry_id}\u0000${record.unit_of_measure}`
-    const current = grouped.get(key) ?? {
-      facility,
-      unit: record.unit_of_measure,
-      total: 0,
-      programs: new Set<string>(),
-      pollutants: new Set<string>(),
-      years: new Set<number>(),
+  const sectorCount = value.sectorCount
+  let previousWeek = 0
+  return value.weeks.every((entry) => {
+    if (
+      !isRecord(entry) ||
+      typeof entry.year !== 'number' ||
+      !Number.isInteger(entry.year) ||
+      typeof entry.week !== 'number' ||
+      !Number.isInteger(entry.week) ||
+      entry.week < 1 ||
+      entry.week > 53 ||
+      !(entry.yesPercent === null ||
+        (typeof entry.yesPercent === 'number' &&
+          Number.isFinite(entry.yesPercent) &&
+          entry.yesPercent >= 0 &&
+          entry.yesPercent <= 100)) ||
+      typeof entry.availableSectorCount !== 'number' ||
+      !Number.isInteger(entry.availableSectorCount) ||
+      entry.availableSectorCount < 0 ||
+      typeof entry.lowConfidenceSectorCount !== 'number' ||
+      !Number.isInteger(entry.lowConfidenceSectorCount) ||
+      entry.lowConfidenceSectorCount < 0 ||
+      entry.availableSectorCount + entry.lowConfidenceSectorCount > sectorCount
+    ) {
+      return false
     }
 
-    current.total += record.annual_emission
-    current.programs.add(record.program)
-    current.pollutants.add(record.pollutant)
-    current.years.add(record.reporting_year)
-    grouped.set(key, current)
-  }
-
-  return [...grouped.values()]
+    const currentWeek = entry.year * 100 + entry.week
+    if (currentWeek <= previousWeek) return false
+    previousWeek = currentWeek
+    return true
+  })
 }
 
-function TrendChart({ records }: { records: Emission[] }) {
-  const unitGroups = new Map<string, Map<number, number>>()
+type PlotReadyOccupation = BlsOccupation & {
+  'Employment change, percent': number
+  'Total occupational separations rate, annual average': number
+}
 
-  for (const record of records) {
-    const years = unitGroups.get(record.unit_of_measure) ?? new Map<number, number>()
-    years.set(
-      record.reporting_year,
-      (years.get(record.reporting_year) ?? 0) + record.annual_emission,
+function hasChartValues(row: BlsOccupation): row is PlotReadyOccupation {
+  return (
+    typeof row['Employment change, percent'] === 'number' &&
+    typeof row['Total occupational separations rate, annual average'] === 'number'
+  )
+}
+
+function getMedianSeparationRate(occupations: BlsOccupation[]): number | null {
+  const rates = occupations
+    .flatMap((occupation) => {
+      const rate = occupation['Total occupational separations rate, annual average']
+      return typeof rate === 'number' ? [rate] : []
+    })
+    .sort((a, b) => a - b)
+
+  if (rates.length === 0) return null
+
+  const middle = Math.floor(rates.length / 2)
+  return rates.length % 2 === 0 ? (rates[middle - 1] + rates[middle]) / 2 : rates[middle]
+}
+
+function getNiceAxisScale(minValue: number, maxValue: number) {
+  const range = maxValue > minValue ? maxValue - minValue : Math.max(Math.abs(minValue), 1)
+  const rawStep = range / 8
+  const magnitude = 10 ** Math.floor(Math.log10(rawStep))
+  const stepSize = [1, 2, 5, 10]
+    .map((factor) => factor * magnitude)
+    .reduce((closest, candidate) =>
+      Math.abs(candidate - rawStep) < Math.abs(closest - rawStep) ? candidate : closest,
     )
-    unitGroups.set(record.unit_of_measure, years)
-  }
+  const min = Math.floor(minValue / stepSize) * stepSize
+  let max = Math.ceil(maxValue / stepSize) * stepSize
+  if (max <= min) max = min + stepSize
 
-  if (unitGroups.size === 0) {
-    return <p className="empty-note">No emissions match these filters.</p>
+  return {
+    min: Number(min.toPrecision(12)),
+    max: Number(max.toPrecision(12)),
+    stepSize,
+  }
+}
+
+type GrowthReadyOccupation = BlsOccupation & {
+  'Employment change, percent': number
+}
+
+function getGrowthExtremes(occupations: BlsOccupation[]): GrowthReadyOccupation[] {
+  const ranked = occupations
+    .filter(
+      (occupation): occupation is GrowthReadyOccupation =>
+        typeof occupation['Employment change, percent'] === 'number',
+    )
+    .sort(
+      (a, b) =>
+        a['Employment change, percent'] - b['Employment change, percent'] ||
+        a['Occupation title'].localeCompare(b['Occupation title']),
+    )
+  const lowest = ranked.slice(0, 5)
+  const highest = ranked.slice(-5).reverse()
+  const highestCodes = new Set(highest.map((occupation) => occupation['SOC code']))
+
+  return [
+    ...highest,
+    ...lowest.filter((occupation) => !highestCodes.has(occupation['SOC code'])),
+  ]
+}
+
+function getEmploymentChangeMetric(occupations: BlsOccupation[], exposure: Exposure) {
+  const changes = occupations.flatMap((occupation) => {
+    const change = occupation['Employment change, percent']
+    return occupation['Relative AI exposure'] === exposure && typeof change === 'number'
+      ? [change]
+      : []
+  })
+    .sort((a, b) => a - b)
+
+  if (changes.length === 0) return null
+
+  const middle = Math.floor(changes.length / 2)
+  const median =
+    changes.length % 2 === 0
+      ? (changes[middle - 1] + changes[middle]) / 2
+      : changes[middle]
+
+  return {
+    mean: changes.reduce((sum, value) => sum + value, 0) / changes.length,
+    median,
+  }
+}
+
+function GrowthExtremesChart({
+  occupations,
+  palette,
+}: {
+  occupations: BlsOccupation[]
+  palette: ChartPalette
+}) {
+  const extremes = getGrowthExtremes(occupations)
+  const chartData: ChartData<'bar', number[], string> = {
+    labels: extremes.map((occupation) => occupation['Occupation title']),
+    datasets: [
+      {
+        label: 'Employment change',
+        data: extremes.map((occupation) => occupation['Employment change, percent']),
+        backgroundColor: extremes.map(
+          (occupation) => palette.exposures[occupation['Relative AI exposure']].fill,
+        ),
+        borderColor: extremes.map(
+          (occupation) => palette.exposures[occupation['Relative AI exposure']].border,
+        ),
+        borderWidth: 1,
+        borderRadius: 4,
+        barPercentage: 0.78,
+        categoryPercentage: 0.9,
+      },
+    ],
+  }
+  const options: ChartOptions<'bar'> = {
+    indexAxis: 'y',
+    responsive: true,
+    maintainAspectRatio: false,
+    color: palette.axisText,
+    font: { family: 'Montserrat, sans-serif', size: 12 },
+    plugins: {
+      legend: { display: false },
+      tooltip: {
+        backgroundColor: palette.tooltipBackground,
+        borderColor: palette.tooltipBorder,
+        borderWidth: 1,
+        titleColor: palette.tooltipText,
+        bodyColor: palette.tooltipText,
+        callbacks: {
+          title(items) {
+            const occupation = extremes[items[0]?.dataIndex ?? -1]
+            return occupation?.['Occupation title'] ?? ''
+          },
+          label(context: TooltipItem<'bar'>) {
+            const occupation = extremes[context.dataIndex]
+            if (!occupation) return ''
+
+            return [
+              `Employment change: ${formatPercent(occupation['Employment change, percent'])}`,
+              `Relative AI exposure: ${occupation['Relative AI exposure']}`,
+              `Industry: ${occupation['Industry title'].trim()}`,
+            ]
+          },
+        },
+      },
+    },
+    scales: {
+      x: {
+        type: 'linear',
+        title: { display: true, text: 'Expected employment change (%)', color: palette.axisText },
+        ticks: { color: palette.axisText, callback: (value) => `${value}%` },
+        grid: {
+          color: (context) => (context.tick.value === 0 ? palette.referenceLine : palette.grid),
+          lineWidth: (context) => (context.tick.value === 0 ? 1.5 : 1),
+        },
+        border: { display: false },
+      },
+      y: {
+        type: 'category',
+        reverse: true,
+        ticks: { color: palette.axisText },
+        grid: { display: false },
+        border: { display: false },
+      },
+    },
   }
 
   return (
-    <div className="trend-groups">
-      {[...unitGroups.entries()]
-        .sort(([unitA], [unitB]) => unitA.localeCompare(unitB))
-        .map(([unit, yearTotals]) => {
-          const years = [...yearTotals.keys()].sort((a, b) => a - b)
-          const max = Math.max(...yearTotals.values(), 1)
+    <div
+      className="chart-frame chart-frame--growth"
+      role="img"
+      aria-label="Horizontal bar chart showing the five occupations with the highest and lowest expected employment change rates. Bar colors indicate relative AI exposure."
+    >
+      {extremes.length > 0 ? (
+        <Bar data={chartData} options={options} />
+      ) : (
+        <p className="empty-chart-message">No occupations with employment change data match this filter.</p>
+      )}
+    </div>
+  )
+}
 
-          return (
-            <section className="trend-group" key={unit} aria-label={`Emissions in ${unit}`}>
-              <div className="trend-unit">{unit}</div>
-              <div className="bar-chart">
-                {years.map((year) => {
-                  const value = yearTotals.get(year) ?? 0
-                  const height = Math.max(3, (value / max) * 100)
+function SectorTimelineChart({
+  timeline,
+  palette,
+}: {
+  timeline: SectorTimelineData
+  palette: ChartPalette
+}) {
+  const plottableWeeks = timeline.weeks.filter(
+    (week): week is SectorTimelinePoint & { yesPercent: number } =>
+      typeof week.yesPercent === 'number',
+  )
 
-                  return (
-                    <div className="bar-column" key={year}>
-                      <span className="bar-value">{formatNumber.format(value)}</span>
-                      <div className="bar-track">
-                        <div
-                          className="bar"
-                          style={{ height: `${height}%` }}
-                          title={`${formatNumber.format(value)} ${unit} in ${year}`}
-                        />
-                      </div>
-                      <span className="bar-year">{year}</span>
-                    </div>
-                  )
-                })}
-              </div>
-            </section>
-          )
-        })}
+  if (plottableWeeks.length === 0) {
+    return <p className="empty-chart-message">No numeric Question 7 Yes estimates are available.</p>
+  }
+
+  const labels = timeline.weeks.map(
+    ({ year, week }) => `W${week} '${String(year).slice(-2)}`,
+  )
+  const maximumPercent = Math.max(...plottableWeeks.map((week) => week.yesPercent))
+  const yScale = getNiceAxisScale(0, Math.max(maximumPercent * 1.1, 1))
+  const chartData: ChartData<'line', (number | null)[], string> = {
+    labels,
+    datasets: [
+      {
+        label: 'Mean Yes response',
+        data: timeline.weeks.map((week) => week.yesPercent),
+        borderColor: palette.timelineLine,
+        backgroundColor: palette.timelineLine,
+        borderWidth: 2,
+        tension: 0.2,
+        spanGaps: false,
+        pointRadius: timeline.weeks.map((week) => week.lowConfidenceSectorCount > 0 ? 5 : 3),
+        pointHoverRadius: 7,
+        pointBackgroundColor: timeline.weeks.map((week) =>
+          week.lowConfidenceSectorCount > 0 ? palette.lowConfidence : palette.timelineLine,
+        ),
+        pointBorderColor: timeline.weeks.map((week) =>
+          week.lowConfidenceSectorCount > 0 ? palette.lowConfidence : palette.timelineLine,
+        ),
+      },
+    ],
+  }
+  const options: ChartOptions<'line'> = {
+    responsive: true,
+    maintainAspectRatio: false,
+    interaction: { mode: 'nearest', intersect: true },
+    color: palette.axisText,
+    font: { family: 'Montserrat, sans-serif', size: 12 },
+    plugins: {
+      legend: { display: false },
+      tooltip: {
+        backgroundColor: palette.tooltipBackground,
+        borderColor: palette.tooltipBorder,
+        borderWidth: 1,
+        titleColor: palette.tooltipText,
+        bodyColor: palette.tooltipText,
+        callbacks: {
+          title(items) {
+            const point = timeline.weeks[items[0]?.dataIndex ?? -1]
+            return point ? `Week ${point.week}, ${point.year}` : ''
+          },
+          label(context) {
+            const point = timeline.weeks[context.dataIndex]
+            if (!point) return ''
+
+            const lines = [
+              `Unweighted mean: ${point.yesPercent === null ? 'No estimate' : formatPercent(point.yesPercent)}`,
+              `${point.availableSectorCount} of ${timeline.sectorCount} sectors included`,
+            ]
+            if (point.lowConfidenceSectorCount > 0) {
+              lines.push(
+                `${point.lowConfidenceSectorCount} low-confidence estimate${point.lowConfidenceSectorCount === 1 ? '' : 's'} excluded`,
+              )
+            }
+            return lines
+          },
+        },
+      },
+    },
+    scales: {
+      x: {
+        type: 'category',
+        title: { display: true, text: 'Collection week', color: palette.axisText },
+        ticks: {
+          color: palette.axisText,
+          maxTicksLimit: 12,
+          maxRotation: 0,
+          minRotation: 0,
+          callback: (_value, index) => labels[index] ?? '',
+        },
+        grid: { display: false },
+        border: { display: false },
+      },
+      y: {
+        type: 'linear',
+        min: 0,
+        max: yScale.max,
+        title: { display: true, text: 'Businesses answering “Yes” (%)', color: palette.axisText },
+        ticks: {
+          color: palette.axisText,
+          stepSize: yScale.stepSize,
+          callback: (value) => formatAxisPercent(Number(value)),
+        },
+        grid: { color: palette.grid },
+        border: { display: false },
+      },
+    },
+  }
+
+  return (
+    <div
+      className="chart-frame chart-frame--timeline"
+      role="img"
+      aria-label="Line chart showing the unweighted average percentage of businesses answering yes to Question 7 across NAICS sectors over time. Weeks with low-confidence sector estimates are highlighted."
+    >
+      <Line data={chartData} options={options} />
+    </div>
+  )
+}
+
+function ScatterPlot({
+  occupations,
+  allOccupations,
+  medianSeparationRate,
+  palette,
+}: {
+  occupations: BlsOccupation[]
+  allOccupations: BlsOccupation[]
+  medianSeparationRate: number | null
+  palette: ChartPalette
+}) {
+  const rowsByExposure: Record<Exposure, PlotReadyOccupation[]> = {
+    'Very high': [],
+    High: [],
+    Moderate: [],
+    Low: [],
+  }
+
+  for (const occupation of occupations) {
+    if (hasChartValues(occupation)) {
+      rowsByExposure[occupation['Relative AI exposure']].push(occupation)
+    }
+  }
+
+  const chartData: ChartData<'bubble', BubbleDataPoint[], string> = {
+    datasets: exposureOrder.map((exposure) => ({
+      label: exposure,
+      data: rowsByExposure[exposure].map((occupation) => ({
+        x: occupation['Total occupational separations rate, annual average'],
+        y: occupation['Employment change, percent'],
+        r: 5,
+      })),
+      backgroundColor: palette.exposures[exposure].fill,
+      borderColor: palette.exposures[exposure].border,
+      borderWidth: 1,
+      hoverBorderWidth: 2,
+    })),
+  }
+
+  const separationRates = allOccupations.flatMap((occupation) => {
+    const rate = occupation['Total occupational separations rate, annual average']
+    return typeof rate === 'number' ? [rate] : []
+  })
+  const maxRate = separationRates.length > 0 ? Math.max(...separationRates) : 0
+  const xScale = getNiceAxisScale(0, maxRate)
+  const employmentChanges = occupations.flatMap((occupation) => {
+    const change = occupation['Employment change, percent']
+    return typeof change === 'number' ? [change] : []
+  })
+  const minChange = employmentChanges.length > 0 ? Math.min(...employmentChanges) : 0
+  const maxChange = employmentChanges.length > 0 ? Math.max(...employmentChanges) : 0
+  const yScale = getNiceAxisScale(Math.min(minChange, 0), Math.max(maxChange, 0))
+  const referenceLinesAndLabels: Plugin<'bubble'> = {
+    id: 'scatter-reference-lines-and-quadrants',
+    beforeDatasetsDraw(chart) {
+      const { left, right, top, bottom } = chart.chartArea
+      const context = chart.ctx
+      context.save()
+      context.beginPath()
+      context.rect(left, top, right - left, bottom - top)
+      context.clip()
+      context.beginPath()
+      context.setLineDash([6, 4])
+      context.strokeStyle = palette.referenceLine
+      context.lineWidth = 1.5
+      if (medianSeparationRate !== null) {
+        const x = chart.scales.x.getPixelForValue(medianSeparationRate)
+        context.moveTo(x, top)
+        context.lineTo(x, bottom)
+      }
+      const zeroY = chart.scales.y.getPixelForValue(0)
+      context.moveTo(left, zeroY)
+      context.lineTo(right, zeroY)
+      context.stroke()
+      context.restore()
+    },
+    afterDatasetsDraw(chart) {
+      if (medianSeparationRate === null) return
+
+      const { left, right, top, bottom } = chart.chartArea
+      const medianX = chart.scales.x.getPixelForValue(medianSeparationRate)
+      const zeroY = chart.scales.y.getPixelForValue(0)
+      if (medianX < left || medianX > right || zeroY < top || zeroY > bottom) return
+
+      const labels = [
+        { lines: ['Growing with', 'Low Churn'], x: (left + medianX) / 2, y: top + 16 },
+        { lines: ['Growing with', 'High Churn'], x: (medianX + right) / 2, y: top + 16 },
+        { lines: ['Disappearing', 'Jobs'], x: (medianX + right) / 2, y: bottom - 20 },
+        { lines: ['Declining with', 'Low Churn'], x: (left + medianX) / 2, y: bottom - 20 },
+      ]
+
+        const context = chart.ctx
+        context.save()
+        context.font = '600 11px Montserrat, sans-serif'
+        context.textBaseline = 'middle'
+        context.textAlign = 'center'
+        context.lineWidth = 3
+        context.lineJoin = 'round'
+        context.strokeStyle = palette.annotationBackground
+        context.fillStyle = palette.annotationText
+        for (const label of labels) {
+          const lineHeight = 12
+          label.lines.forEach((line, index) => {
+            const y = label.y + (index - (label.lines.length - 1) / 2) * lineHeight
+            context.strokeText(line, label.x, y)
+            context.fillText(line, label.x, y)
+          })
+        }
+      context.restore()
+    },
+  }
+
+  const options: ChartOptions<'bubble'> = {
+    responsive: true,
+    maintainAspectRatio: false,
+    interaction: { mode: 'nearest', intersect: true },
+    color: palette.axisText,
+    font: { family: 'Montserrat, sans-serif', size: 12 },
+    plugins: {
+      legend: {
+        position: 'bottom',
+        labels: {
+          color: palette.axisText,
+          usePointStyle: true,
+          pointStyle: 'circle',
+          padding: 22,
+        },
+      },
+      tooltip: {
+        backgroundColor: palette.tooltipBackground,
+        borderColor: palette.tooltipBorder,
+        borderWidth: 1,
+        titleColor: palette.tooltipText,
+        bodyColor: palette.tooltipText,
+        callbacks: {
+          title(items) {
+            const item = items[0]
+            const exposure = exposureOrder.find(
+              (category) => category === item?.dataset.label,
+            )
+            const occupation =
+              exposure === undefined
+                ? undefined
+                : rowsByExposure[exposure][item?.dataIndex ?? -1]
+
+            return occupation
+              ? occupation['Occupation title']
+              : ''
+          },
+          label(context: TooltipItem<'bubble'>) {
+            const exposure = exposureOrder.find(
+              (category) => category === context.dataset.label,
+            )
+            const occupation =
+              exposure === undefined
+                ? undefined
+                : rowsByExposure[exposure][context.dataIndex]
+
+            if (!occupation) return ''
+
+            return [
+              `Employment change: ${formatPercent(occupation['Employment change, percent'])}`,
+              `Occupational separations rate: ${formatPercent(occupation['Total occupational separations rate, annual average'])}`,
+              `Relative AI exposure: ${occupation['Relative AI exposure']}`,
+            ]
+          },
+        },
+      },
+    },
+    scales: {
+      x: {
+        type: 'linear',
+        title: {
+          display: true,
+          text: 'Total occupational separations rate, annual average (%)',
+          color: palette.axisText,
+        },
+        min: xScale.min,
+        max: xScale.max,
+        ticks: {
+          color: palette.axisText,
+          stepSize: xScale.stepSize,
+          callback: (value) => formatAxisPercent(Number(value)),
+        },
+        grid: { color: palette.grid },
+        border: { display: false },
+      },
+      y: {
+        type: 'linear',
+        title: { display: true, text: 'Employment change (%)', color: palette.axisText },
+        min: yScale.min,
+        max: yScale.max,
+        ticks: {
+          color: palette.axisText,
+          stepSize: yScale.stepSize,
+          callback: (value) => formatAxisPercent(Number(value)),
+        },
+        grid: { color: palette.grid },
+        border: { display: false },
+      },
+    },
+  }
+
+  return (
+    <div
+      className="chart-frame"
+      role="img"
+      aria-label="Scatter plot of employment change and occupational separations rate by occupation. Color indicates relative AI exposure. All points are the same size."
+    >
+      <Bubble data={chartData} options={options} plugins={[referenceLinesAndLabels]} />
     </div>
   )
 }
 
 function App() {
-  const [snapshot, setSnapshot] = useState<Snapshot | null>(null)
+  const [dataset, setDataset] = useState<BlsDataset | null>(null)
+  const [sectorTimeline, setSectorTimeline] = useState<SectorTimelineData | null>(null)
   const [loading, setLoading] = useState(true)
+  const [timelineLoading, setTimelineLoading] = useState(true)
   const [loadError, setLoadError] = useState('')
-  const [filters, setFilters] = useState<Filters>({
-    year: 'all',
-    program: 'all',
-    pollutant: 'all',
-    unit: '',
-  })
+  const [timelineLoadError, setTimelineLoadError] = useState('')
+  const [excludedIndustries, setExcludedIndustries] = useState<Set<string>>(() => new Set())
+  const [theme, setTheme] = useState<Theme>(() =>
+    localStorage.getItem('dashboard-theme') === 'dark' ? 'dark' : 'light',
+  )
+
+  const chartPalette = getChartPalette(theme)
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme
+    localStorage.setItem('dashboard-theme', theme)
+    document
+      .querySelector('meta[name="theme-color"]')
+      ?.setAttribute('content', theme === 'dark' ? '#19191b' : '#f5f5f5')
+  }, [theme])
 
   useEffect(() => {
     const controller = new AbortController()
 
-    fetch(`${import.meta.env.BASE_URL}data/colorado-emissions.json`, {
+    fetch(`${import.meta.env.BASE_URL}data/bls_ai_exposure.json`, {
       signal: controller.signal,
-      cache: 'no-store',
     })
       .then(async (response) => {
         if (!response.ok) {
-          throw new Error(`The public data snapshot could not be loaded (HTTP ${response.status}).`)
+          throw new Error(`The BLS dataset could not be loaded (HTTP ${response.status}).`)
         }
-        return (await response.json()) as unknown
-      })
-      .then((data) => {
-        if (!isSnapshot(data)) {
-          throw new Error('The public data snapshot has an unexpected format.')
+
+        const payload: unknown = await response.json()
+        if (!isDataset(payload)) {
+          throw new Error('The BLS dataset has an unexpected format.')
         }
-        setSnapshot(data)
+        setDataset(payload)
       })
       .catch((error: unknown) => {
         if (error instanceof DOMException && error.name === 'AbortError') return
-        setLoadError(error instanceof Error ? error.message : 'The public data snapshot could not be loaded.')
+        setLoadError(
+          error instanceof Error ? error.message : 'The BLS dataset could not be loaded.',
+        )
       })
-      .finally(() => setLoading(false))
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false)
+      })
 
     return () => controller.abort()
   }, [])
 
-  const facilityIndex = useMemo(
-    () => new Map((snapshot?.facilities ?? []).map((facility) => [facility.registry_id, facility])),
-    [snapshot],
-  )
-  const emissions = snapshot?.emissions ?? []
-  const years = [...new Set(emissions.map((record) => record.reporting_year))].sort((a, b) => b - a)
-  const programs = optionValues(emissions.map((record) => record.program_code ?? record.program))
-  const pollutants = optionValues(emissions.map((record) => record.pollutant))
-  const units = optionValues(emissions.map((record) => record.unit_of_measure))
+  useEffect(() => {
+    const controller = new AbortController()
 
-  const unitCounts = new Map<string, number>()
-  for (const record of emissions) {
-    unitCounts.set(record.unit_of_measure, (unitCounts.get(record.unit_of_measure) ?? 0) + 1)
-  }
-  const defaultUnit = [...unitCounts.entries()].sort(
-    ([unitA, countA], [unitB, countB]) => countB - countA || unitA.localeCompare(unitB),
-  )[0]?.[0]
-  const selectedUnit = filters.unit || defaultUnit || 'all'
+    fetch(`${import.meta.env.BASE_URL}data/sector_ai_adoption.json`, {
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error(`The Question 7 timeline could not be loaded (HTTP ${response.status}).`)
+        }
 
-  const filteredEmissions = emissions.filter(
-    (record) =>
-      (filters.year === 'all' || record.reporting_year.toString() === filters.year) &&
-      (filters.program === 'all' ||
-        (record.program_code ?? record.program) === filters.program) &&
-      (filters.pollutant === 'all' || record.pollutant === filters.pollutant) &&
-      (selectedUnit === 'all' || record.unit_of_measure === selectedUnit),
-  )
+        const payload: unknown = await response.json()
+        if (!isSectorTimeline(payload)) {
+          throw new Error('The Question 7 timeline data has an unexpected format.')
+        }
+        setSectorTimeline(payload)
+      })
+      .catch((error: unknown) => {
+        if (error instanceof DOMException && error.name === 'AbortError') return
+        setTimelineLoadError(
+          error instanceof Error ? error.message : 'The Question 7 timeline could not be loaded.',
+        )
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setTimelineLoading(false)
+      })
 
-  const facilityTotals = summarizeFacilities(filteredEmissions, facilityIndex).sort((a, b) => {
-    if (selectedUnit === 'all') {
-      return a.facility.name.localeCompare(b.facility.name) || a.unit.localeCompare(b.unit)
-    }
-    return b.total - a.total || a.facility.name.localeCompare(b.facility.name)
-  })
-  const unitSet = new Set(filteredEmissions.map((record) => record.unit_of_measure))
-  const totalEmissions =
-    unitSet.size === 1
-      ? filteredEmissions.reduce((sum, record) => sum + record.annual_emission, 0)
-      : null
-  const totalUnit = unitSet.size === 1 ? [...unitSet][0] : null
-  const reportingYears = filteredEmissions.map((record) => record.reporting_year)
-  const yearRange =
-    reportingYears.length > 0
-      ? `${reportingYears.reduce((min, year) => Math.min(min, year), Infinity)}–${reportingYears.reduce((max, year) => Math.max(max, year), -Infinity)}`
-      : '—'
-  const facilityCount = new Set(filteredEmissions.map((record) => record.registry_id)).size
+    return () => controller.abort()
+  }, [])
 
-  function updateFilter(key: keyof Filters, value: string) {
-    setFilters((current) => ({ ...current, [key]: value }))
+  const industryTitles = dataset
+    ? [...new Set(dataset.raw_data.map((occupation) => occupation['Industry title'].trim()))].sort(
+        (a, b) => a.localeCompare(b),
+      )
+    : []
+  const visibleOccupations =
+    dataset?.raw_data.filter(
+      (occupation) => !excludedIndustries.has(occupation['Industry title'].trim()),
+    ) ?? []
+  const medianSeparationRate = dataset ? getMedianSeparationRate(dataset.raw_data) : null
+  const plottableCount = visibleOccupations.filter(hasChartValues).length
+  const selectedIndustryCount = industryTitles.filter(
+    (title) => !excludedIndustries.has(title),
+  ).length
+
+  function toggleIndustry(title: string) {
+    setExcludedIndustries((current) => {
+      const next = new Set(current)
+      if (next.has(title)) next.delete(title)
+      else next.add(title)
+      return next
+    })
   }
 
   return (
     <main className="page-shell">
-      <header className="topbar">
-        <a className="brand" href="#top" aria-label="Colorado emissions overview">
-          <span className="brand-mark" aria-hidden="true">CO</span>
-          <span>Colorado emissions atlas</span>
+      <header className="site-header">
+        <a className="brand" href="#top">
+          <span className="brand-mark" aria-hidden="true">AI</span>
+          <span>How is AI Shaping the Workforce?</span>
         </a>
-        <a className="topbar-link" href="#about">About the data <span aria-hidden="true">↗</span></a>
+        <div className="header-actions">
+          <span className="source-tag">A look at AI usage and job market trends</span>
+          <button
+            type="button"
+            className="theme-toggle"
+            aria-label={`Switch to ${theme === 'light' ? 'dark' : 'light'} theme`}
+            aria-pressed={theme === 'dark'}
+            onClick={() => setTheme((current) => (current === 'light' ? 'dark' : 'light'))}
+          >
+            {theme === 'light' ? 'Dark mode' : 'Light mode'}
+          </button>
+        </div>
       </header>
 
       <section className="intro" id="top">
-        <div className="intro-copy">
-          <p className="eyebrow"><span className="eyebrow-dot" /> COLORADO · FACILITY-REPORTED AIR EMISSIONS</p>
-          <h1>What Colorado facilities report to the EPA</h1>
-          <p className="intro-description">
-            Explore estimated air emissions by facility, pollutant, program, and reporting year.
-            Each view keeps unlike units separate so comparisons stay clear.
-          </p>
-          <a className="text-link" href="#explore">Explore the data <span aria-hidden="true">↓</span></a>
-        </div>
-        <div className="intro-art" aria-hidden="true">
-          <div className="orbit orbit-one" />
-          <div className="orbit orbit-two" />
-          <div className="orbit orbit-three" />
-          <span className="mountain mountain-back" />
-          <span className="mountain mountain-front" />
-          <span className="sun" />
-          <span className="art-label">CO</span>
-        </div>
+        <p className="eyebrow"><span className="eyebrow-dot" /> BLS NATIONAL EMPLOYMENT MATRIX · 2025–35</p>
+        <h1>How do job separations relate to employment change?</h1>
+        <p className="intro-copy">
+          Compare projected employment change with the total occupational separations rate.
+          Each point represents an occupation, with color showing its relative AI exposure.
+        </p>
       </section>
 
-      <section className="data-ribbon" aria-label="Snapshot information">
-        <div className="ribbon-label"><span className="live-dot" /> ECHO AIR EMISSIONS DATA</div>
-        <div className="ribbon-detail">
-          {snapshot?.generated_at
-            ? `Snapshot refreshed ${new Date(snapshot.generated_at).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric', timeZone: 'UTC' })} · Coverage from ${snapshot.minimum_reporting_year ?? Math.min(...snapshot.emissions.map((record) => record.reporting_year))}`
-            : 'Waiting for the first successful data refresh'}
-        </div>
-        <div className="ribbon-source">EPA · EDGI ECHO Pipeline</div>
-      </section>
-
-      <section className="dashboard-section" id="explore">
+      <section className="chart-section" aria-labelledby="chart-title">
         <div className="section-heading">
           <div>
-            <p className="eyebrow">THE DASHBOARD</p>
-            <h2>Explore reported emissions</h2>
+            <p className="eyebrow">OCCUPATION SNAPSHOT</p>
+            <h2 id="chart-title">Employment patterns by occupation</h2>
           </div>
-          <p className="section-aside">Filter the data to focus on a particular year, reporting program, or pollutant.</p>
+          <span className="data-count">
+            {formatNumber.format(plottableCount)} occupations plotted
+          </span>
         </div>
 
-        <div className="filter-panel">
-          <div className="filter-heading">
-            <span className="filter-icon" aria-hidden="true">⌘</span>
-            <div>
-              <h3>Refine your view</h3>
-              <p>Every chart and total updates with your selections.</p>
-            </div>
-          </div>
-          <div className="filter-controls">
-            <label>
-              <span>Reporting year</span>
-              <select value={filters.year} onChange={(event) => updateFilter('year', event.target.value)}>
-                <option value="all">All years</option>
-                {years.map((year) => <option key={year} value={year}>{year}</option>)}
-              </select>
-            </label>
-            <label>
-              <span>EPA program</span>
-              <select value={filters.program} onChange={(event) => updateFilter('program', event.target.value)}>
-                <option value="all">All programs</option>
-                {programs.map((program) => <option key={program} value={program}>{programLabels[program] ?? program}</option>)}
-              </select>
-            </label>
-            <label>
-              <span>Pollutant</span>
-              <select value={filters.pollutant} onChange={(event) => updateFilter('pollutant', event.target.value)}>
-                <option value="all">All pollutants</option>
-                {pollutants.map((pollutant) => <option key={pollutant} value={pollutant}>{pollutant}</option>)}
-              </select>
-            </label>
-            <label>
-              <span>Emissions unit</span>
-              <select value={selectedUnit} onChange={(event) => updateFilter('unit', event.target.value)}>
-                <option value="all">All units (shown separately)</option>
-                {units.map((unit) => <option key={unit} value={unit}>{unit}</option>)}
-              </select>
-            </label>
-          </div>
-        </div>
-
-        {loading && <div className="status-message" role="status">Loading the latest published snapshot…</div>}
-        {!loading && loadError && <div className="status-message status-error" role="alert">{loadError}</div>}
-        {!loading && !loadError && (snapshot?.emissions.length ?? 0) === 0 && (
-          <div className="status-message" role="status">
-            <strong>No public snapshot has been published yet.</strong>
-            <span>Once the GitHub Actions refresh succeeds, Colorado facility emissions will appear here.</span>
-          </div>
+        {loading && <div className="status-message" role="status">Loading the BLS dataset…</div>}
+        {!loading && loadError && (
+          <div className="status-message status-error" role="alert">{loadError}</div>
         )}
-
-        {!loading && !loadError && (snapshot?.emissions.length ?? 0) > 0 && (
+        {!loading && !loadError && dataset && (
           <>
-            <div className="metric-grid">
-              <article className="metric-card">
-                <span className="metric-label">Facilities in view</span>
-                <strong>{formatInteger.format(facilityCount)}</strong>
-                <span className="metric-note">Colorado facilities with matching records</span>
-              </article>
-              <article className="metric-card">
-                <span className="metric-label">Reported records</span>
-                <strong>{formatInteger.format(filteredEmissions.length)}</strong>
-                <span className="metric-note">Facility · pollutant · year entries</span>
-              </article>
-              <article className="metric-card metric-card-accent">
-                <span className="metric-label">Estimated emissions</span>
-                <strong>{totalEmissions === null ? 'Multiple units' : formatNumber.format(totalEmissions)}</strong>
-                <span className="metric-note">
-                  {totalEmissions === null
-                    ? 'Select one unit to see a comparable total'
-                    : totalUnit}
+            <details className="industry-filter">
+              <summary>
+                <span>Industry title</span>
+                <span className="filter-summary">
+                  {selectedIndustryCount === industryTitles.length
+                    ? 'All industries'
+                    : `${selectedIndustryCount} of ${industryTitles.length} selected`}
                 </span>
-              </article>
-              <article className="metric-card">
-                <span className="metric-label">Reporting years</span>
-                <strong>{yearRange}</strong>
-                <span className="metric-note">Years represented in this view</span>
-              </article>
+              </summary>
+              <div className="industry-filter-panel">
+                <div className="filter-actions">
+                  <button type="button" onClick={() => setExcludedIndustries(new Set())}>
+                    Select all
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setExcludedIndustries(new Set(industryTitles))}
+                  >
+                    Clear all
+                  </button>
+                </div>
+                <div className="industry-options" role="group" aria-label="Industry titles">
+                  {industryTitles.map((title) => (
+                    <label className="industry-option" key={title}>
+                      <input
+                        type="checkbox"
+                        checked={!excludedIndustries.has(title)}
+                        onChange={() => toggleIndustry(title)}
+                      />
+                      <span>{title}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            </details>
+            <div className="charts-grid">
+              <section className="visualization-panel" aria-labelledby="growth-chart-title">
+                <div className="visualization-heading">
+                  <p className="eyebrow">GROWTH EXTREMES</p>
+                  <h2 id="growth-chart-title">Highest and lowest expected employment growth</h2>
+                  <p>Five highest and lowest expected employment change rates in the selected industries.</p>
+                </div>
+                <div className="chart-card">
+                  <GrowthExtremesChart occupations={visibleOccupations} palette={chartPalette} />
+                  <div className="exposure-legend" aria-label="AI exposure legend">
+                    {exposureOrder.map((exposure) => (
+                      <span key={exposure}>
+                        <i
+                          style={{
+                            backgroundColor: chartPalette.exposures[exposure].fill,
+                            borderColor: chartPalette.exposures[exposure].border,
+                          }}
+                        />
+                        {exposure}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              </section>
+
+              <section className="visualization-panel" aria-labelledby="scatter-chart-title">
+                <div className="visualization-heading">
+                  <p className="eyebrow">OCCUPATION SCATTER</p>
+                  <h2 id="scatter-chart-title">Employment change and separations</h2>
+                  <p>Compare employment change against the average total occupational separations rate.</p>
+                </div>
+                <div className="chart-card">
+                  <ScatterPlot
+                    occupations={visibleOccupations}
+                    allOccupations={dataset.raw_data}
+                    medianSeparationRate={medianSeparationRate}
+                    palette={chartPalette}
+                  />
+                  <p className="chart-note">
+                    Dashed line: all-occupation median separation rate
+                    {medianSeparationRate === null ? '' : ` (${formatPercent(medianSeparationRate)})`}.
+                    It does not change with the industry filter.
+                  </p>
+                </div>
+              </section>
             </div>
 
-            {filteredEmissions.length === 0 ? (
-              <div className="status-message">
-                <strong>No records match these filters.</strong>
-                <span>Try a different year, program, pollutant, or unit.</span>
-              </div>
-            ) : (
-              <div className="analysis-grid">
-                <section className="content-card trend-card">
-                  <div className="card-heading">
-                    <div>
-                      <p className="eyebrow">OVER TIME</p>
-                      <h3>Reported emissions by year</h3>
-                    </div>
-                    <span className="card-icon" aria-hidden="true">↗</span>
+            {dataset.metrics && (
+              <section className="metrics-section" aria-labelledby="metrics-title">
+                <div className="metrics-heading">
+                  <div>
+                    <p className="eyebrow">SUPPLIED SUMMARY METRICS</p>
+                    <h2 id="metrics-title">Employment growth by AI exposure</h2>
                   </div>
-                  <p className="card-description">
-                    Annual reported values are grouped by unit. Each unit has its own scale.
-                  </p>
-                  <TrendChart records={filteredEmissions} />
-                  <p className="chart-footnote">Reporting years differ by EPA program; a missing year does not mean zero emissions.</p>
-                </section>
+                  <p>Mean and median projected percent change from the dataset.</p>
+                </div>
+                <div className="metrics-grid">
+                  {exposureOrder.map((exposure) => {
+                    const metric = getEmploymentChangeMetric(visibleOccupations, exposure)
 
-                <section className="content-card facility-card">
-                  <div className="card-heading">
-                    <div>
-                      <p className="eyebrow">FACILITIES</p>
-                      <h3>{selectedUnit === 'all' ? 'Facility totals by unit' : 'Largest reported totals'}</h3>
-                    </div>
-                    <span className="card-count">{facilityTotals.length}</span>
-                  </div>
-                  <p className="card-description">
-                    {selectedUnit === 'all'
-                      ? 'Rows with different units are kept separate and are not ranked against each other.'
-                      : `Ranked within ${selectedUnit}; values combine the selected reporting years and filters.`}
-                  </p>
-                  <div className="table-wrap">
-                    <table>
-                      <thead>
-                        <tr>
-                          <th scope="col">Facility</th>
-                          <th scope="col">Pollutants</th>
-                          <th scope="col">Years</th>
-                          <th scope="col" className="numeric">Reported amount</th>
-                          <th scope="col">Unit</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {facilityTotals.slice(0, 20).map((row, index) => (
-                          <tr key={`${row.facility.registry_id}-${row.unit}`}>
-                            <td>
-                              <div className="facility-name">
-                                {selectedUnit !== 'all' && <span className="rank">{String(index + 1).padStart(2, '0')}</span>}
-                                <span>
-                                  <strong>{row.facility.name || 'Unnamed facility'}</strong>
-                                  <small>{[row.facility.city, row.facility.county].filter(Boolean).join(' · ') || 'Colorado'}</small>
-                                </span>
-                              </div>
-                            </td>
-                            <td>{row.pollutants.size}</td>
-                            <td>{row.years.size}</td>
-                            <td className="numeric">{formatNumber.format(row.total)}</td>
-                            <td><span className="unit-pill">{row.unit}</span></td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                  <p className="table-footnote">
-                    Totals sum reported values for a facility and unit; they are not a measure of relative health risk.
-                  </p>
-                </section>
-              </div>
+                    return (
+                      <article className="metric-card" key={exposure}>
+                        <h3>
+                          <span
+                            className="metric-dot"
+                            style={{ backgroundColor: chartPalette.exposures[exposure].border }}
+                          />
+                          {exposure} exposure
+                        </h3>
+                        <div className="metric-values">
+                          <p><span>Mean growth</span><strong>{metric ? formatPercent(metric.mean) : '—'}</strong></p>
+                          <p><span>Median growth</span><strong>{metric ? formatPercent(metric.median) : '—'}</strong></p>
+                        </div>
+                      </article>
+                    )
+                  })}
+                </div>
+              </section>
             )}
           </>
         )}
       </section>
 
-      <section className="about-section" id="about">
-        <div className="about-mark" aria-hidden="true">i</div>
-        <div>
-          <p className="eyebrow">READING THE DATA</p>
-          <h2>Reported estimates, not direct measurements</h2>
-          <p>
-            ECHO combines facility-level data from EPA&apos;s National Emissions Inventory (NEI),
-            Greenhouse Gas Reporting Program (GHGRP), Toxics Release Inventory (TRI), and Clean
-            Air Markets (CAMD). Reporting schedules, pollutants, and units vary by program.
-            Emissions are reported or estimated values—not a complete accounting of pollution or
-            a direct measure of exposure, compliance, or health risk.
-          </p>
-          <a href="https://echo.epa.gov/tools/data-downloads/air-emissions-download-summary" target="_blank" rel="noreferrer">
-            EPA Air Emissions data documentation <span aria-hidden="true">↗</span>
-          </a>
+      <section className="chart-section timeline-section" aria-labelledby="sector-timeline-title">
+        <div className="section-heading">
+          <div>
+            <p className="eyebrow">BUSINESS SI USE</p>
+            <h2 id="sector-timeline-title">Business use of SI over time</h2>
+          </div>
         </div>
+
+        {timelineLoading && (
+          <div className="status-message" role="status">Loading the Question 7 timeline…</div>
+        )}
+        {!timelineLoading && timelineLoadError && (
+          <div className="status-message status-error" role="alert">{timelineLoadError}</div>
+        )}
+        {!timelineLoading && !timelineLoadError && sectorTimeline && (
+          <div className="chart-card">
+            <SectorTimelineChart timeline={sectorTimeline} palette={chartPalette} />
+            <div className="timeline-legend" aria-label="Timeline legend">
+              <span className="timeline-legend-item">
+                <i className="timeline-legend-line" style={{ borderColor: chartPalette.timelineLine }} />
+                Unweighted mean Yes response
+              </span>
+              <span className="timeline-legend-item">
+                <i className="timeline-legend-point" style={{ backgroundColor: chartPalette.lowConfidence }} />
+                At least one low-confidence sector estimate
+              </span>
+            </div>
+            <p className="chart-note">
+              Each point is the unweighted mean of available Yes percentages across 19 NAICS
+              sectors; “XX” (multi-unit companies operating across multiple sectors or states) is
+              excluded. Weeks containing “S” estimates are highlighted; those estimates are
+              excluded from the mean. Weeks with only “.” values are omitted.
+            </p>
+          </div>
+        )}
       </section>
 
-      <footer className="footer">
-        <span>Colorado emissions atlas</span>
-        <span>Data: <a href="https://echo.epa.gov/" target="_blank" rel="noreferrer">EPA ECHO</a> · Pipeline: <a href="https://github.com/edgi-govdata-archiving/ECHO-Pipeline" target="_blank" rel="noreferrer">EDGI</a></span>
+      <footer className="site-footer">
+        <p>
+          Source: U.S. Bureau of Labor Statistics, 2025 National Employment Matrix, with relative
+          AI-exposure categories included in the supplied dataset.
+        </p>
+        <p>Additional source: U.S. Census Bureau, Business Trends and Outlook Survey, Sector.xlsx, Question 7.</p>
+        <p>
+          AI exposure is a category in this dataset—not a forecast that a job will disappear or a
+          measure of an individual worker&apos;s risk.
+        </p>
       </footer>
     </main>
   )

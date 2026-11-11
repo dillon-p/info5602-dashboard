@@ -11,7 +11,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
-from scripts.refresh_data import OUTPUT_PATH, number, validate_snapshot, write_snapshot
+from analytics.scripts.refresh_data import OUTPUT_PATH, number, validate_snapshot, write_snapshot
 
 
 DEFAULT_SNAPSHOT_URL = (

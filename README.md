@@ -6,6 +6,7 @@ A public React + TypeScript dashboard exploring projected employment growth, med
 
 - One bubble per occupation, positioned by projected employment change (2025–35) and 2025 median annual wage
 - Bubble color for relative AI exposure and bubble area scaled to 2025 employment
+- A boxplot comparing 2025 median annual wage distributions across relative AI-exposure groups
 - Mean and median projected employment change by AI-exposure group, using the supplied `metrics` array
 
 AI exposure is a category in the supplied dataset, not a forecast that a job will disappear or a measure of an individual worker's risk. Missing numeric source values may be `null` or an em dash; both are treated as unavailable in the chart.

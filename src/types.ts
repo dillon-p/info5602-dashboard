@@ -5,6 +5,7 @@ export type BlsOccupation = {
   'Occupation title': string
   'SOC code': string
   'Industry title': string
+  'Median annual wage, dollars, 2025': NumericValue
   'Employment change, percent': NumericValue
   'Total occupational separations rate, annual average': NumericValue
   'Relative AI exposure': Exposure

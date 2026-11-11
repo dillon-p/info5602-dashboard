@@ -52,6 +52,17 @@ type ChartPalette = {
   tooltipText: string
 }
 
+type BoxPlotSummary = {
+  exposure: Exposure
+  count: number
+  q1: number
+  median: number
+  q3: number
+  lowerWhisker: number
+  upperWhisker: number
+  outliers: Array<{ occupation: BlsOccupation; wage: number }>
+}
+
 ChartJS.register(BarElement, CategoryScale, LinearScale, LineElement, PointElement, Tooltip, Legend)
 ChartJS.defaults.font.family = 'Montserrat, sans-serif'
 
@@ -111,6 +122,7 @@ function isOccupation(value: unknown): value is BlsOccupation {
     typeof value['SOC code'] === 'string' &&
     typeof value['Industry title'] === 'string' &&
     value['Industry title'].trim().length > 0 &&
+    isNumericValue(value['Median annual wage, dollars, 2025']) &&
     isExposure(value['Relative AI exposure']) &&
     isNumericValue(value['Employment change, percent']) &&
     isNumericValue(value['Total occupational separations rate, annual average'])
@@ -239,6 +251,51 @@ function getNiceAxisScale(minValue: number, maxValue: number) {
     max: Number(max.toPrecision(12)),
     stepSize,
   }
+}
+
+function getQuantile(sortedValues: number[], quantile: number) {
+  const position = (sortedValues.length - 1) * quantile
+  const lowerIndex = Math.floor(position)
+  const upperIndex = Math.ceil(position)
+  const fraction = position - lowerIndex
+
+  return sortedValues[lowerIndex] + (sortedValues[upperIndex] - sortedValues[lowerIndex]) * fraction
+}
+
+function getBoxPlotSummaries(occupations: BlsOccupation[]): BoxPlotSummary[] {
+  return exposureOrder.flatMap((exposure) => {
+    const records = occupations
+      .flatMap((occupation) => {
+        const wage = occupation['Median annual wage, dollars, 2025']
+        return occupation['Relative AI exposure'] === exposure && typeof wage === 'number'
+          ? [{ occupation, wage }]
+          : []
+      })
+      .sort((a, b) => a.wage - b.wage)
+    if (records.length === 0) return []
+
+    const wages = records.map(({ wage }) => wage)
+    const q1 = getQuantile(wages, 0.25)
+    const median = getQuantile(wages, 0.5)
+    const q3 = getQuantile(wages, 0.75)
+    const interquartileRange = q3 - q1
+    const lowerFence = q1 - 1.5 * interquartileRange
+    const upperFence = q3 + 1.5 * interquartileRange
+    const lowerWhisker = records.find(({ wage }) => wage >= lowerFence)?.wage ?? wages[0]
+    const upperWhisker =
+      [...records].reverse().find(({ wage }) => wage <= upperFence)?.wage ?? wages[wages.length - 1]
+
+    return [{
+      exposure,
+      count: records.length,
+      q1,
+      median,
+      q3,
+      lowerWhisker,
+      upperWhisker,
+      outliers: records.filter(({ wage }) => wage < lowerFence || wage > upperFence),
+    }]
+  })
 }
 
 type GrowthReadyOccupation = BlsOccupation & {
@@ -501,6 +558,189 @@ function SectorTimelineChart({
       aria-label="Line chart showing the unweighted average percentage of businesses answering yes to Question 7 across NAICS sectors over time. Weeks with low-confidence sector estimates are highlighted."
     >
       <Line data={chartData} options={options} />
+    </div>
+  )
+}
+
+function formatCompactCurrency(value: number) {
+  if (value >= 1_000_000) {
+    return `$${formatNumber.format(value / 1_000_000)}M`
+  }
+  if (value >= 1_000) {
+    return `$${formatNumber.format(value / 1_000)}k`
+  }
+  return `$${formatNumber.format(value)}`
+}
+
+function BoxPlotChart({
+  occupations,
+  palette,
+}: {
+  occupations: BlsOccupation[]
+  palette: ChartPalette
+}) {
+  const summaries = getBoxPlotSummaries(occupations)
+  if (summaries.length === 0) {
+    return <p className="empty-chart-message">No median annual wage data matches this filter.</p>
+  }
+
+  const width = 920
+  const height = 420
+  const margin = { top: 20, right: 24, bottom: 76, left: 86 }
+  const plotWidth = width - margin.left - margin.right
+  const plotHeight = height - margin.top - margin.bottom
+  const maximumWage = Math.max(
+    ...summaries.flatMap((summary) => [
+      summary.upperWhisker,
+      ...summary.outliers.map(({ wage }) => wage),
+    ]),
+  )
+  const yScale = getNiceAxisScale(0, maximumWage)
+  const yPosition = (value: number) =>
+    margin.top + plotHeight - (value / yScale.max) * plotHeight
+  const categoryWidth = plotWidth / exposureOrder.length
+  const xPosition = (index: number) =>
+    margin.left + categoryWidth * (index + 0.5)
+  const tickCount = Math.floor(yScale.max / yScale.stepSize)
+  const ticks = Array.from({ length: tickCount + 1 }, (_, index) => index * yScale.stepSize)
+
+  return (
+    <div
+      className="boxplot-scroll"
+      role="img"
+      aria-label="Boxplot comparing the distribution of 2025 median annual wages across the four relative AI exposure groups. Boxes show the interquartile range and median; whiskers extend to 1.5 times the interquartile range, and outliers are shown as points."
+    >
+      <svg
+        className="boxplot-svg"
+        viewBox={`0 0 ${width} ${height}`}
+        role="presentation"
+        aria-hidden="true"
+      >
+        {ticks.map((tick) => {
+          const y = yPosition(tick)
+          return (
+            <g key={tick}>
+              <line
+                x1={margin.left}
+                x2={width - margin.right}
+                y1={y}
+                y2={y}
+                stroke={palette.grid}
+              />
+              <text
+                x={margin.left - 12}
+                y={y + 4}
+                fill={palette.axisText}
+                textAnchor="end"
+                className="boxplot-axis-label"
+              >
+                {formatCompactCurrency(tick)}
+              </text>
+            </g>
+          )
+        })}
+        <text
+          x={20}
+          y={margin.top + plotHeight / 2}
+          fill={palette.axisText}
+          textAnchor="middle"
+          className="boxplot-axis-title"
+          transform={`rotate(-90 20 ${margin.top + plotHeight / 2})`}
+        >
+          Median annual wage (2025)
+        </text>
+        {summaries.map((summary) => {
+          const index = exposureOrder.indexOf(summary.exposure)
+          const center = xPosition(index)
+          const boxWidth = Math.min(72, categoryWidth * 0.45)
+          const boxTop = yPosition(summary.q3)
+          const boxBottom = yPosition(summary.q1)
+          const color = palette.exposures[summary.exposure]
+
+          return (
+            <g key={summary.exposure}>
+              <title>
+                {`${summary.exposure} exposure: n=${summary.count}; Q1 ${formatCompactCurrency(summary.q1)}; median ${formatCompactCurrency(summary.median)}; Q3 ${formatCompactCurrency(summary.q3)}; whiskers ${formatCompactCurrency(summary.lowerWhisker)}–${formatCompactCurrency(summary.upperWhisker)}; ${summary.outliers.length} outliers.`}
+              </title>
+              <line
+                x1={center}
+                x2={center}
+                y1={yPosition(summary.upperWhisker)}
+                y2={yPosition(summary.lowerWhisker)}
+                stroke={color.border}
+                strokeWidth={2}
+              />
+              <line
+                x1={center - boxWidth * 0.28}
+                x2={center + boxWidth * 0.28}
+                y1={yPosition(summary.upperWhisker)}
+                y2={yPosition(summary.upperWhisker)}
+                stroke={color.border}
+                strokeWidth={2}
+              />
+              <line
+                x1={center - boxWidth * 0.28}
+                x2={center + boxWidth * 0.28}
+                y1={yPosition(summary.lowerWhisker)}
+                y2={yPosition(summary.lowerWhisker)}
+                stroke={color.border}
+                strokeWidth={2}
+              />
+              <rect
+                x={center - boxWidth / 2}
+                y={boxTop}
+                width={boxWidth}
+                height={Math.max(boxBottom - boxTop, 1)}
+                fill={color.fill}
+                fillOpacity={0.75}
+                stroke={color.border}
+                strokeWidth={1.5}
+              />
+              <line
+                x1={center - boxWidth / 2}
+                x2={center + boxWidth / 2}
+                y1={yPosition(summary.median)}
+                y2={yPosition(summary.median)}
+                stroke={palette.axisText}
+                strokeWidth={2}
+              />
+              {summary.outliers.map(({ occupation, wage }, outlierIndex) => (
+                <circle
+                  key={occupation['SOC code']}
+                  cx={center + ((outlierIndex % 7) - 3) * 3.2}
+                  cy={yPosition(wage) + (Math.floor(outlierIndex / 7) % 2 === 0 ? 1 : -1)}
+                  r={2.8}
+                  fill={color.fill}
+                  stroke={color.border}
+                  strokeWidth={0.8}
+                >
+                  <title>
+                    {`${occupation['Occupation title']}: ${formatCompactCurrency(wage)} annual median wage`}
+                  </title>
+                </circle>
+              ))}
+              <text
+                x={center}
+                y={height - margin.bottom + 27}
+                fill={palette.axisText}
+                textAnchor="middle"
+                className="boxplot-category-label"
+              >
+                {summary.exposure}
+              </text>
+              <text
+                x={center}
+                y={height - margin.bottom + 45}
+                fill={palette.axisText}
+                textAnchor="middle"
+                className="boxplot-sample-count"
+              >
+                n = {summary.count}
+              </text>
+            </g>
+          )
+        })}
+      </svg>
     </div>
   )
 }
@@ -1026,6 +1266,37 @@ function App() {
           </div>
         )}
       </section>
+
+      {dataset && !loading && !loadError && (
+        <section className="chart-section boxplot-section" aria-labelledby="wage-exposure-title">
+          <div className="section-heading">
+            <div>
+              <p className="eyebrow">WAGE DISTRIBUTION</p>
+              <h2 id="wage-exposure-title">Median annual wages by AI exposure</h2>
+            </div>
+          </div>
+          <div className="visualization-heading">
+            <p>
+              Compare the 2025 occupation wage distributions across relative AI-exposure groups.
+              The existing Industry title filter applies to this chart.
+            </p>
+          </div>
+          <div className="chart-card">
+            <BoxPlotChart occupations={visibleOccupations} palette={chartPalette} />
+            <div className="boxplot-legend" aria-label="Boxplot key">
+              <span><i className="boxplot-key-box" /> Middle 50% (Q1–Q3)</span>
+              <span><i className="boxplot-key-median" /> Median</span>
+              <span><i className="boxplot-key-whisker" /> Within 1.5× IQR</span>
+              <span><i className="boxplot-key-outlier" /> Outlier</span>
+            </div>
+            <p className="chart-note">
+              Each occupation is one observation. Whiskers extend to the most extreme values within
+              1.5× the interquartile range; points beyond them are outliers. Unavailable wages are
+              excluded.
+            </p>
+          </div>
+        </section>
+      )}
 
       <footer className="site-footer">
         <p>

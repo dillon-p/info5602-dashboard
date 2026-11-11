@@ -339,6 +339,92 @@ h1 {
   height: 350px;
 }
 
+.boxplot-section .visualization-heading {
+  max-width: 720px;
+  margin-bottom: 14px;
+}
+
+.boxplot-section .visualization-heading > p {
+  margin-bottom: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.boxplot-scroll {
+  width: 100%;
+  overflow-x: auto;
+}
+
+.boxplot-svg {
+  display: block;
+  width: 100%;
+  min-width: 700px;
+  height: auto;
+  overflow: visible;
+  font-family: 'Montserrat', sans-serif;
+}
+
+.boxplot-axis-label {
+  font-size: 11px;
+}
+
+.boxplot-axis-title {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.boxplot-category-label {
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.boxplot-sample-count {
+  font-size: 10px;
+}
+
+.boxplot-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+  padding: 8px 0 10px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.boxplot-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.boxplot-key-box {
+  width: 14px;
+  height: 10px;
+  border: 1px solid var(--ink);
+  background: rgb(222 146 180 / 55%);
+}
+
+.boxplot-key-median {
+  width: 14px;
+  height: 0;
+  border-top: 2px solid var(--ink);
+}
+
+.boxplot-key-whisker {
+  width: 2px;
+  height: 14px;
+  background: var(--ink);
+}
+
+.boxplot-key-outlier {
+  width: 7px;
+  height: 7px;
+  border: 1px solid var(--ink);
+  border-radius: 50%;
+  background: rgb(184 40 105);
+}
+
 .timeline-legend {
   display: flex;
   flex-wrap: wrap;
@@ -548,6 +634,10 @@ h1 {
 
   .chart-frame--timeline {
     height: 320px;
+  }
+
+  .boxplot-svg {
+    min-width: 700px;
   }
 
   .metrics-grid {

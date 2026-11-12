@@ -10,9 +10,6 @@ from pathlib import Path
 from statistics import fmean
 from typing import Any, Iterable, Sequence
 
-from openpyxl import load_workbook
-
-
 SOURCE_PATH = Path(__file__).resolve().parents[1] / "notebooks" / "Sector.xlsx"
 OUTPUT_PATH = Path(__file__).resolve().parents[2] / "public" / "data" / "sector_ai_adoption.json"
 QUESTION_ID = 7
@@ -122,6 +119,8 @@ def build_timeline(
 def build_from_workbook(source_path: Path = SOURCE_PATH) -> dict[str, Any]:
     if not source_path.is_file():
         raise FileNotFoundError(f"Sector workbook does not exist: {source_path}")
+
+    from openpyxl import load_workbook
 
     workbook = load_workbook(source_path, read_only=True, data_only=True)
     if "Response Estimates" not in workbook.sheetnames:

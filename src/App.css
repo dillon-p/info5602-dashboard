@@ -89,19 +89,6 @@
   letter-spacing: 0.12em;
 }
 
-.intro .eyebrow {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-}
-
-.eyebrow-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--green);
-}
-
 h1,
 h2,
 h3,
@@ -133,6 +120,13 @@ h1 {
 .charts-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+  gap: 28px;
+}
+
+.wage-charts-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   align-items: start;
   gap: 28px;
 }
@@ -187,8 +181,23 @@ h1 {
   letter-spacing: -0.035em;
 }
 
+.timeline-section .section-heading > div > p:last-child {
+  max-width: 720px;
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.industry-filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
 .data-count {
-  padding-bottom: 3px;
   color: var(--muted);
   font-size: 12px;
   white-space: nowrap;
@@ -198,7 +207,7 @@ h1 {
   position: relative;
   z-index: 1;
   width: fit-content;
-  margin-bottom: 14px;
+  margin-bottom: 0;
 }
 
 .industry-filter summary {
@@ -351,15 +360,25 @@ h1 {
   line-height: 1.6;
 }
 
+.boxplot-section .chart-frame {
+  height: auto;
+  aspect-ratio: 560 / 380;
+}
+
+.boxplot-section .chart-frame canvas {
+  position: absolute;
+  inset: 0;
+}
+
 .boxplot-scroll {
   width: 100%;
-  overflow-x: auto;
+  overflow: hidden;
 }
 
 .boxplot-svg {
   display: block;
   width: 100%;
-  min-width: 700px;
+  min-width: 0;
   height: auto;
   overflow: visible;
   font-family: 'Montserrat', sans-serif;
@@ -367,11 +386,6 @@ h1 {
 
 .boxplot-axis-label {
   font-size: 11px;
-}
-
-.boxplot-axis-title {
-  font-size: 12px;
-  font-weight: 600;
 }
 
 .boxplot-category-label {
@@ -425,31 +439,10 @@ h1 {
   background: rgb(184 40 105);
 }
 
-.timeline-legend {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px 20px;
-  padding: 8px 0 10px;
-  color: var(--muted);
-  font-size: 11px;
-}
-
-.timeline-legend-item {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-}
-
-.timeline-legend-line {
-  width: 18px;
-  height: 0;
-  border-top: 2px solid;
-}
-
-.timeline-legend-point {
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
+@media (max-width: 760px) {
+  .wage-charts-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .exposure-legend {
@@ -634,10 +627,6 @@ h1 {
 
   .chart-frame--timeline {
     height: 320px;
-  }
-
-  .boxplot-svg {
-    min-width: 700px;
   }
 
   .metrics-grid {
